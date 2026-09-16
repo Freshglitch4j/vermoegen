@@ -4,7 +4,8 @@
    ============================================================= */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
+const UNDO_KEY = 'vermoegen.vorImport';
 const STORE_KEY = 'vermoegen.v1';
 const OPEN_KEY = 'vermoegen.open';
 
@@ -14,6 +15,16 @@ const PALETTE = [
   ['#e87ba4', '#e07aa2'], ['#008300', '#2e9e3a'], ['#4a3aa7', '#9085e9'], ['#e34948', '#e66767']
 ];
 const onDark = hex => (PALETTE.find(p => p[0] === hex) || [hex, hex])[1];
+let THEME = 'light';
+const cc = hex => THEME === 'dark' ? onDark(hex) : hex; // Kategoriefarbe passend zum Modus
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const pref = (db && db.settings && db.settings.theme) || 'system';
+  THEME = pref === 'system' ? (mq.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.theme = THEME;
+  const meta = document.querySelector('meta[name=theme-color]');
+  if (meta) meta.content = THEME === 'dark' ? '#0B1120' : '#F3F4F6';
+}
 
 const MONTHS = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const MSHORT = ['Jän', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
@@ -163,6 +174,7 @@ const nodeDepth = n => { let d = 0; while (n && n.parent) { n = IDX.map.get(n.pa
 const nodeHeight = n => { const k = kids(n.id); return k.length ? 1 + Math.max(...k.map(nodeHeight)) : 0; };
 const topOf = n => { while (n.parent && IDX.map.get(n.parent)) n = IDX.map.get(n.parent); return n; };
 const colorOf = n => topOf(n).color || PALETTE[0][0];
+const excludedDeep = n => { while (n) { if (n.excluded) return true; n = n.parent ? IDX.map.get(n.parent) : null; } return false; };
 const archivedDeep = n => { while (n) { if (n.archived) return true; n = n.parent ? IDX.map.get(n.parent) : null; } return false; };
 const descendants = id => kids(id).flatMap(k => [k.id, ...descendants(k.id)]);
 
@@ -174,7 +186,7 @@ function val(id, m) {
     const k = kids(id);
     if (k.length) {
       let s = 0, any = false;
-      for (const c of k) { const v = val(c.id, m); if (v != null) { s += v; any = true; } }
+      for (const c of k) { if (c.excluded) continue; const v = val(c.id, m); if (v != null) { s += v; any = true; } }
       if (any) r = s;
     }
     if (r == null) {
@@ -186,7 +198,7 @@ function val(id, m) {
 }
 function total(m) {
   let s = 0, any = false;
-  for (const n of kids(null)) { const v = val(n.id, m); if (v != null) { s += v; any = true; } }
+  for (const n of kids(null)) { if (n.excluded) continue; const v = val(n.id, m); if (v != null) { s += v; any = true; } }
   return any ? s : null;
 }
 const visibleIn = (n, m, c) => !archivedDeep(n) || val(n.id, m) != null || (c && val(n.id, c) != null);
@@ -268,7 +280,7 @@ function overviewRows(list, lvl, m, c) {
     const has = k.length > 0, open = has && ui.open.has(nd.id);
     const vm = val(nd.id, m), vc = c ? val(nd.id, c) : null;
     const d = vm != null && vc != null ? vm - vc : null;
-    return `<div class="trow l${lvl}${has ? ' kids' : ''}${open ? ' open' : ''}" data-id="${nd.id}" style="--rc:${colorOf(nd)}">
+    return `<div class="trow l${lvl}${has ? ' kids' : ''}${open ? ' open' : ''}${excludedDeep(nd) ? ' excl' : ''}" data-id="${nd.id}" style="--rc:${cc(colorOf(nd))}">
       <div class="c${vc == null ? ' none' : ''}">${c ? eur(vc) : ''}</div>
       <div class="m"><span class="chev">${has ? ICON.chev : ''}</span><span class="name">${esc(nd.name)}</span>
       <span class="amt${vm == null ? ' none' : ''}">${eur(vm)}${d != null && !HIDE ? `<small class="${cls(d)}">${eur(d, true)}</small>` : ''}</span></div></div>`
@@ -287,7 +299,7 @@ function renderOverview(anim) {
   const t = total(m), tc = c ? total(c) : null;
   const d = t != null && tc != null ? t - tc : null;
   const tops = kids(null).filter(x => visibleIn(x, m, c));
-  const items = tops.map(x => ({ name: x.name, v: Math.max(0, val(x.id, m) || 0), color: onDark(x.color || PALETTE[0][0]) }));
+  const items = tops.filter(x => !x.excluded).map(x => ({ name: x.name, v: Math.max(0, val(x.id, m) || 0), color: onDark(x.color || PALETTE[0][0]) }));
   const posSum = items.reduce((a, i) => a + i.v, 0);
   const [lc, lm] = colLabels(c, m);
 
@@ -354,16 +366,16 @@ function goMonth(dir) {
 function entryRows(list, lvl, c, src) {
   return list.filter(n => !n.archived).map(nd => {
     const k = kids(nd.id).filter(x => !x.archived);
-    const color = colorOf(nd), vc = c ? val(nd.id, c) : null;
+    const color = cc(colorOf(nd)), vc = c ? val(nd.id, c) : null, ex = excludedDeep(nd) ? ' excl' : '';
     const cmp = `<div class="c${vc == null ? ' none' : ''}">${c ? eur(vc) : ''}</div>`;
     if (k.length) {
-      return `<div class="trow l${lvl} open" style="--rc:${color}">${cmp}
+      return `<div class="trow l${lvl} open${ex}" style="--rc:${color}">${cmp}
         <div class="m"><span class="name">${esc(nd.name)}</span><span class="sum" data-sum="${nd.id}"></span></div></div>`
         + entryRows(k, lvl + 1, c, src);
     }
     const raw = src && db.months[src] ? db.months[src].values[nd.id] : null;
     const shown = raw == null ? '' : fmtInput(nd.liability ? Math.abs(raw) : raw);
-    return `<div class="trow l${lvl} input" style="--rc:${color}">${cmp}
+    return `<div class="trow l${lvl} input${ex}" style="--rc:${color}">${cmp}
       <div class="m"><span class="name">${esc(nd.name)}</span>
       <span class="inp">${nd.liability ? '<span>−</span>' : ''}<input class="val" type="text" inputmode="decimal" enterkeyhint="next" autocomplete="off" data-id="${nd.id}" value="${shown}" aria-label="${esc(nd.name)}"></span></div></div>`;
   }).join('');
@@ -406,7 +418,7 @@ function renderEntry(m) {
     let s = 0;
     for (const [id, raw] of Object.entries(e.values)) {
       const n = IDX.map.get(id);
-      if (n && archivedDeep(n) && !kids(id).length) s += n.liability ? -Math.abs(raw) : +raw;
+      if (n && archivedDeep(n) && !excludedDeep(n) && !kids(id).length) s += n.liability ? -Math.abs(raw) : +raw;
     }
     return s;
   };
@@ -422,13 +434,14 @@ function renderEntry(m) {
     const sumOf = id => {
       const k = kids(id).filter(x => !x.archived);
       if (!k.length) return vals.has(id) ? vals.get(id) : null;
+      const counted = k.filter(x => !x.excluded);
       let s = 0, any = false;
-      k.forEach(x => { const y = sumOf(x.id); if (y != null) { s += y; any = true; } });
+      counted.forEach(x => { const y = sumOf(x.id); if (y != null) { s += y; any = true; } });
       return any ? s : null;
     };
     $$('[data-sum]', v).forEach(el => { el.textContent = eur(sumOf(el.dataset.sum)); });
     let t = extraSum, any = extraSum !== 0;
-    kids(null).filter(x => !x.archived).forEach(x => { const y = sumOf(x.id); if (y != null) { t += y; any = true; } });
+    kids(null).filter(x => !x.archived && !x.excluded).forEach(x => { const y = sumOf(x.id); if (y != null) { t += y; any = true; } });
     $('#sumTotal').textContent = any ? eur(t) : '–';
     const dd = any && tc != null ? t - tc : null;
     $('#sumDelta').innerHTML = dd != null ? `${eur(dd, true)}${tc ? ' · ' + pct(dd / Math.abs(tc) * 100, true) : ''}` : '';
@@ -516,7 +529,7 @@ function renderTrend() {
     const a = fin[0].v, b = fin[fin.length - 1].v;
     change = `<span class="${cls(b - a)}">${eur(b - a, true)}</span>${a ? ' · ' + pct((b - a) / Math.abs(a) * 100, true) : ''}`;
   }
-  const stackNodes = (sel ? kids(sel.id) : tops).filter(x => !x.archived || keys.some(k => val(x.id, k) != null));
+  const stackNodes = (sel ? kids(sel.id) : tops).filter(x => !x.excluded && (!x.archived || keys.some(k => val(x.id, k) != null)));
   const showStack = stackNodes.length >= 2 && pts.length >= 2;
   const hasFc = pts.some(p => p.fc);
 
@@ -525,7 +538,7 @@ function renderTrend() {
     <div class="seg">${Object.keys(RANGES).map(r => `<button data-r="${r}" class="${r === ui.range ? 'on' : ''}">${r === '6M' ? '6 M' : r === '1J' ? '1 J' : r === '3J' ? '3 J' : r}</button>`).join('')}</div>
     <div class="chips">
       <button data-f="all" class="${!sel ? 'on' : ''}">Gesamt</button>
-      ${tops.map(x => `<button data-f="${x.id}" class="${sel && sel.id === x.id ? 'on' : ''}"><i style="background:${x.color}"></i>${esc(x.name)}</button>`).join('')}
+      ${tops.map(x => `<button data-f="${x.id}" class="${sel && sel.id === x.id ? 'on' : ''}"><i style="background:${cc(x.color)}"></i>${esc(x.name)}</button>`).join('')}
     </div>
     <section class="card pad">
       <h2>${sel ? esc(sel.name) : 'Nettovermögen'}<small>${change}</small></h2>
@@ -535,7 +548,7 @@ function renderTrend() {
     ${showStack ? `<section class="card pad">
       <h2>Zusammensetzung</h2>
       <div class="chart" id="stack"></div>
-      <div class="keys">${stackNodes.map(x => `<span><i style="background:${sel ? shade(colorOf(sel), stackNodes.indexOf(x), stackNodes.length) : x.color}"></i>${esc(x.name)}</span>`).join('')}</div>
+      <div class="keys">${stackNodes.map(x => `<span><i style="background:${sel ? shade(cc(colorOf(sel)), stackNodes.indexOf(x), stackNodes.length) : cc(x.color)}"></i>${esc(x.name)}</span>`).join('')}</div>
     </section>` : ''}
     <section class="card">
       ${pts.slice().reverse().map((p, i, arr) => {
@@ -553,7 +566,7 @@ function renderTrend() {
   if (showStack) {
     const series = stackNodes.map((x, i) => ({
       name: x.name,
-      color: sel ? shade(colorOf(sel), i, stackNodes.length) : x.color,
+      color: sel ? shade(cc(colorOf(sel)), i, stackNodes.length) : cc(x.color),
       vals: pts.map(p => Math.max(0, val(x.id, p.k) || 0))
     }));
     drawStack($('#stack'), pts, series);
@@ -590,7 +603,7 @@ function xLabels(f, pts) {
   return s;
 }
 function yGrid(f, sc, Y) {
-  return sc.ticks.map(t => `<line x1="${f.pad.l}" x2="${f.W - f.pad.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="#EDEFF2"/>`
+  return sc.ticks.map(t => `<line class="k-grid" x1="${f.pad.l}" x2="${f.W - f.pad.r}" y1="${Y(t)}" y2="${Y(t)}"/>`
     + (HIDE ? '' : `<text x="${f.pad.l - 8}" y="${Y(t) + 4}" text-anchor="end">${fmtAxis(t, sc.step)}</text>`)).join('');
 }
 let tipHiders = [];
@@ -630,18 +643,18 @@ function drawLine(el, pts) {
   const P = a => a.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
   const base = f.H - f.pad.b;
   let s = `<svg width="${f.W}" height="${f.H}" viewBox="0 0 ${f.W} ${f.H}">
-    <defs><linearGradient id="lgA" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#1E3A8A" stop-opacity=".16"/><stop offset="1" stop-color="#1E3A8A" stop-opacity="0"/></linearGradient></defs>
+    <defs><linearGradient id="lgA" x1="0" x2="0" y1="0" y2="1"><stop class="k-stop" offset="0" stop-opacity=".18"/><stop class="k-stop" offset="1" stop-opacity="0"/></linearGradient></defs>
     ${yGrid(f, sc, Y)}`;
   if (solid.length > 1) s += `<polygon points="${solid[0].x},${base} ${P(solid)} ${solid[solid.length - 1].x},${base}" fill="url(#lgA)"/>
-    <polyline points="${P(solid)}" fill="none" stroke="#1E3A8A" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-  if (dashed.length > 1) s += `<polyline points="${P(dashed)}" fill="none" stroke="#1E3A8A" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>`;
+    <polyline class="k-line" points="${P(solid)}" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (dashed.length > 1) s += `<polyline class="k-line" points="${P(dashed)}" fill="none" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>`;
   pts.forEach((p, i) => {
-    if (p.fc) s += `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#fff" stroke="#1E3A8A" stroke-width="2"/>`;
-    else if (i === lastFin || pts.length === 1) s += `<circle cx="${p.x}" cy="${p.y}" r="4.5" fill="#1E3A8A" stroke="#fff" stroke-width="2"/>`;
+    if (p.fc) s += `<circle class="k-hollow" cx="${p.x}" cy="${p.y}" r="4" stroke-width="2"/>`;
+    else if (i === lastFin || pts.length === 1) s += `<circle class="k-dot" cx="${p.x}" cy="${p.y}" r="4.5" stroke-width="2"/>`;
   });
   s += xLabels(f, pts);
-  s += `<line class="cross" y1="${f.pad.t}" y2="${base}" stroke="#94A3B8" stroke-width="1" style="display:none"/>
-    <circle class="hover-dot" r="5" fill="#1E3A8A" stroke="#fff" stroke-width="2" style="display:none"/></svg>`;
+  s += `<line class="cross k-cross" y1="${f.pad.t}" y2="${base}" stroke-width="1" style="display:none"/>
+    <circle class="hover-dot k-dot" r="5" stroke-width="2" style="display:none"/></svg>`;
   el.innerHTML = s;
   attachTip(el, f, pts, i => `<b>${eur(pts[i].v)}</b>${monthLabel(pts[i].k)}${pts[i].fc ? ' · Prognose' : ''}`);
 }
@@ -658,15 +671,15 @@ function drawStack(el, pts, series) {
     se.vals.forEach((x, i) => acc[i] += x);
     const up = pts.map((p, i) => `${f.X(p.k).toFixed(1)},${Y(acc[i]).toFixed(1)}`);
     const dn = pts.map((p, i) => `${f.X(p.k).toFixed(1)},${Y(lo[i]).toFixed(1)}`).reverse();
-    s += `<polygon points="${up.join(' ')} ${dn.join(' ')}" fill="${se.color}" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>`;
+    s += `<polygon points="${up.join(' ')} ${dn.join(' ')}" class="k-gap" fill="${se.color}" stroke-width="1.5" stroke-linejoin="round"/>`;
   });
   let lastFin = -1; pts.forEach((p, i) => { if (!p.fc) lastFin = i; });
   if (lastFin >= 0 && lastFin < pts.length - 1) {
     const x0 = f.X(pts[lastFin].k);
-    s += `<rect x="${x0}" y="${f.pad.t - 2}" width="${f.W - f.pad.r - x0 + 2}" height="${base - f.pad.t + 2}" fill="#fff" opacity=".55"/>
-      <line x1="${x0}" x2="${x0}" y1="${f.pad.t}" y2="${base}" stroke="#1E3A8A" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+    s += `<rect class="k-veil" x="${x0}" y="${f.pad.t - 2}" width="${f.W - f.pad.r - x0 + 2}" height="${base - f.pad.t + 2}" opacity=".55"/>
+      <line class="k-line" x1="${x0}" x2="${x0}" y1="${f.pad.t}" y2="${base}" stroke-width="1.5" stroke-dasharray="4 3"/>`;
   }
-  s += xLabels(f, pts) + `<line class="cross" y1="${f.pad.t}" y2="${base}" stroke="#0F172A" stroke-width="1" style="display:none"/></svg>`;
+  s += xLabels(f, pts) + `<line class="cross k-cross" y1="${f.pad.t}" y2="${base}" stroke-width="1" style="display:none"/></svg>`;
   el.innerHTML = s;
   attachTip(el, f, pts.map(p => ({ k: p.k })), i => `<b>${eur(tot[i])}</b>${monthLabel(pts[i].k)}${pts[i].fc ? ' · Prognose' : ''}`
     + series.slice().reverse().map(se => `<div><i style="background:${se.color}"></i><span>${esc(se.name)}</span>${eur(se.vals[i])}</div>`).join(''));
@@ -681,16 +694,30 @@ function renderSettings() {
   const v = $('#view');
   const cnt = db.nodes.filter(n => !n.parent && !n.archived).length;
   const lb = db.settings.lastBackup ? new Date(db.settings.lastBackup).toLocaleDateString('de-AT') : 'noch nie';
+  const theme = db.settings.theme || 'system';
+  let undo = null; try { undo = localStorage.getItem(UNDO_KEY); } catch (e) { }
   v.innerHTML = `
     <div class="titlebar"><h1 class="left">Einstellungen</h1></div>
+    <div class="group-title">Darstellung</div>
+    <section class="card segwrap">
+      <div class="seg" id="theme">
+        ${[['system', 'System'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([k, l]) => `<button data-t="${k}" class="${theme === k ? 'on' : ''}">${l}</button>`).join('')}
+      </div>
+    </section>
+    <div class="group-title">Aufbau</div>
     <section class="card">
       <a class="item" href="#/einstellungen/kategorien">${ICON.tree}<span class="grow">Kategorien</span><span class="sub">${cnt}</span>${ICON.go}</a>
+    </section>
+    <div class="group-title">Excel</div>
+    <section class="card">
+      <button class="item" id="csv">${ICON.table}<span class="grow">Excel-Vorlage / Export</span></button>
+      <button class="item" id="imp">${ICON.load}<span class="grow">Aus Excel importieren</span></button>
+      ${undo ? `<button class="item" id="undo">${ICON.close}<span class="grow">Letzten Import rückgängig</span></button>` : ''}
     </section>
     <div class="group-title">Datensicherung</div>
     <section class="card">
       <button class="item" id="bk">${ICON.save}<span class="grow">Backup speichern</span><span class="sub">${lb}</span></button>
       <button class="item" id="rs">${ICON.load}<span class="grow">Backup laden</span></button>
-      <button class="item" id="csv">${ICON.table}<span class="grow">Export für Excel</span></button>
     </section>
     <div class="group-title">Daten</div>
     <section class="card">
@@ -698,8 +725,12 @@ function renderSettings() {
       <button class="item danger" id="wipe">${ICON.trash}<span class="grow">Alle Daten löschen</span></button>
     </section>
     <input type="file" id="file" accept=".json,application/json" hidden>
+    <input type="file" id="csvfile" accept=".csv,text/csv,text/comma-separated-values,application/vnd.ms-excel,text/plain" hidden>
     <p class="version">Vermögen · Version ${APP_VERSION}</p>`;
 
+  $$('#theme button').forEach(b => b.onclick = () => {
+    db.settings.theme = b.dataset.t; persist(); applyTheme(); renderSettings();
+  });
   $('#bk').onclick = () => {
     const d = new Date();
     db.settings.lastBackup = d.toISOString(); persist();
@@ -716,7 +747,7 @@ function renderSettings() {
         if (!validDB(d)) throw new Error('format');
         const n = Object.keys(d.months).length;
         if (!confirm(`Backup mit ${n} Monaten laden? Die aktuellen Daten werden ersetzt.`)) return;
-        d.settings = d.settings || {}; db = d; persist(); reindex(); ui.month = null;
+        d.settings = d.settings || {}; db = d; persist(); reindex(); applyTheme(); ui.month = null;
         toast('Backup geladen'); renderSettings();
       } catch (e) { toast('Datei ist kein gültiges Backup'); }
     };
@@ -724,15 +755,31 @@ function renderSettings() {
     ev.target.value = '';
   };
   $('#csv').onclick = exportCSV;
+  $('#imp').onclick = () => $('#csvfile').click();
+  $('#csvfile').onchange = async ev => {
+    const file = ev.target.files[0]; ev.target.value = '';
+    if (!file) return;
+    try { await importCSVFile(file); } catch (e) { toast('Datei konnte nicht gelesen werden'); }
+  };
+  if (undo) $('#undo').onclick = () => {
+    if (!confirm('Daten auf den Stand vor dem letzten Import zurücksetzen?')) return;
+    try {
+      const d = JSON.parse(undo); if (!validDB(d)) throw new Error();
+      db = d; persist(); localStorage.removeItem(UNDO_KEY); reindex(); ui.month = null;
+      toast('Import rückgängig gemacht'); renderSettings();
+    } catch (e) { toast('Rückgängig nicht möglich'); }
+  };
   $('#demo').onclick = () => {
     if (!confirm('Testdaten laden? Alle bisherigen Werte und Kategorien werden ersetzt.')) return;
-    db = demoDB(); persist(); reindex(); ui.month = null; ui.open.clear(); saveOpen();
+    const theme = db.settings.theme;
+    db = demoDB(); db.settings.theme = theme; persist(); reindex(); ui.month = null; ui.open.clear(); saveOpen();
     toast('Testdaten geladen');
     go('#/', false);
   };
   $('#wipe').onclick = () => {
     if (!confirm('Wirklich alle Daten löschen? Das kann nicht rückgängig gemacht werden.')) return;
-    db = freshDB(); persist(); reindex(); ui.month = null; ui.open.clear(); saveOpen();
+    const theme = db.settings.theme;
+    db = freshDB(); db.settings.theme = theme; persist(); reindex(); ui.month = null; ui.open.clear(); saveOpen();
     toast('Alle Daten gelöscht'); renderSettings();
   };
 }
@@ -743,20 +790,186 @@ function download(name, content, type) {
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
+
+/* ---------------- Excel: Export / Vorlage ----------------
+   Aufbau: Spalte A = Kategorie (eingerückt), dann eine Spalte je Monat,
+   letzte Spalte = ID (für eindeutige Zuordnung beim Import). */
 function exportCSV() {
   reindex();
-  const ks = monthKeys();
+  let ks = monthKeys();
+  if (!ks.length) ks = Array.from({ length: 12 }, (_, i) => addMonths(curKey(), i - 12)); // leere Vorlage
   const q = s => /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   const num = x => x == null ? '' : (Math.round(x * 100) / 100).toFixed(2).replace('.', ',');
-  const lines = [['Kategorie', ...ks.map(k => monthLabel(k) + (db.months[k].forecast ? ' (Prognose)' : ''))].map(q).join(';')];
+  const lines = [['Kategorie', ...ks.map(k => monthLabel(k) + (db.months[k] && db.months[k].forecast ? ' (Prognose)' : '')), 'ID'].map(q).join(';')];
   const walk = (list, lvl) => list.forEach(n => {
-    lines.push([q('   '.repeat(lvl) + n.name), ...ks.map(k => num(val(n.id, k)))].join(';'));
+    lines.push([q('   '.repeat(lvl) + n.name), ...ks.map(k => num(val(n.id, k))), n.id].join(';'));
     walk(kids(n.id), lvl + 1);
   });
   walk(kids(null), 0);
-  lines.push(['Gesamtvermögen', ...ks.map(k => num(total(k)))].join(';'));
+  lines.push(['Gesamtvermögen', ...ks.map(k => num(total(k))), ''].join(';'));
   download(`vermoegen-${new Date().toISOString().slice(0, 10)}.csv`, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
-  toast('Export erstellt');
+  toast('Excel-Datei erstellt');
+}
+
+/* ---------------- Excel: Import ---------------- */
+const MONTH_ALIAS = {
+  'jän': 1, 'jaen': 1, 'jan': 1, 'jänner': 1, 'jaenner': 1, 'januar': 1, 'january': 1,
+  'feb': 2, 'februar': 2, 'february': 2, 'mär': 3, 'maer': 3, 'mrz': 3, 'mar': 3, 'märz': 3, 'maerz': 3, 'march': 3,
+  'apr': 4, 'april': 4, 'mai': 5, 'may': 5, 'jun': 6, 'juni': 6, 'june': 6, 'jul': 7, 'juli': 7, 'july': 7,
+  'aug': 8, 'august': 8, 'sep': 9, 'sept': 9, 'september': 9, 'okt': 10, 'oct': 10, 'oktober': 10, 'october': 10,
+  'nov': 11, 'november': 11, 'dez': 12, 'dec': 12, 'dezember': 12, 'december': 12
+};
+function parseMonthHeader(raw) {
+  let s = String(raw || '').trim().toLowerCase();
+  if (!s) return null;
+  const fc = /prognose/.test(s);
+  s = s.replace(/\(?\s*prognose\s*\)?/g, '').trim();
+  let y, m, r;
+  if ((r = s.match(/^(\d{4})[-\/.](\d{1,2})(?:[-\/.]\d{1,2})?$/))) { y = +r[1]; m = +r[2]; }
+  else if ((r = s.match(/^(?:\d{1,2}\.)?(\d{1,2})[.\/-](\d{4}|\d{2})$/))) { m = +r[1]; y = +r[2]; }
+  else if ((r = s.match(/^([a-zäöü]+)\.?[\s\-'.]*(\d{4}|\d{2})$/))) { m = MONTH_ALIAS[r[1]] || MONTH_ALIAS[r[1].slice(0, 3)]; y = +r[2]; }
+  else if ((r = s.match(/^\d{5}$/))) { const d = new Date(Date.UTC(1899, 11, 30) + (+s) * 864e5); y = d.getUTCFullYear(); m = d.getUTCMonth() + 1; }
+  if (!m || !y || m < 1 || m > 12) return null;
+  if (y < 100) y += 2000;
+  if (y < 1990 || y > 2100) return null;
+  return { key: keyOf(y, m), fc };
+}
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = (text.split(/\r?\n/).find(l => l.trim()) || '');
+  const count = ch => first.split(ch).length - 1;
+  const delim = [';', '\t', ','].sort((a, b) => count(b) - count(a))[0];
+  const rows = []; let row = [], cell = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else quoted = false; }
+      else cell += ch;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+const normName = s => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+function importNum(raw) {
+  let t = String(raw || '').replace(/[^\d,.\-−–()]/g, '');
+  if (!t) return String(raw || '').trim() ? NaN : null;
+  let neg = false;
+  if (/^\(.*\)$/.test(t)) { neg = true; t = t.slice(1, -1); }
+  const v = parseNum(t);
+  return v == null || Number.isNaN(v) ? v : (neg ? -Math.abs(v) : v);
+}
+async function importCSVFile(file) {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf.slice(0, 4));
+  if (bytes[0] === 0x50 && bytes[1] === 0x4B) { toast('Bitte in Excel als CSV speichern'); return; }
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch (e) { text = new TextDecoder('windows-1252').decode(buf); }
+  const res = analyseImport(parseCSV(text));
+  if (!res) { toast('Keine Monatsspalten gefunden'); return; }
+  showImportPreview(res);
+}
+function analyseImport(rows) {
+  reindex();
+  // Kopfzeile: erste Zeile mit mindestens einer erkennbaren Monatsspalte
+  let hIdx = -1, cols = [];
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const c = rows[i].map((h, j) => ({ j, m: parseMonthHeader(h) })).filter(x => x.m);
+    if (c.length) { hIdx = i; cols = c; break; }
+  }
+  if (hIdx < 0) return null;
+  const header = rows[hIdx];
+  const idCol = header.findIndex(h => /^\s*id\b/i.test(h));
+  const monthCols = new Set(cols.map(c => c.j));
+  let nameCol = header.findIndex((h, j) => /kategorie|position|name/i.test(h) && !monthCols.has(j));
+  if (nameCol < 0) nameCol = [...header.keys()].find(j => !monthCols.has(j) && j !== idCol) ?? 0;
+
+  const byName = new Map();
+  db.nodes.forEach(n => { const k = normName(n.name); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(n); });
+  const skipNames = new Set(['gesamtvermögen', 'gesamt', 'summe', 'total', 'nettovermögen', 'vermögen', 'gesamtsumme']);
+  const stack = [];
+  const result = { cols, values: {}, forecast: {}, matched: 0, cells: 0, invalid: 0, unmatched: [] };
+  cols.forEach(c => { result.values[c.m.key] = result.values[c.m.key] || {}; if (c.m.fc) result.forecast[c.m.key] = true; });
+
+  for (let i = hIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const rawName = r[nameCol] || '';
+    const name = normName(rawName);
+    const hasValues = cols.some(c => importNum(r[c.j]) != null);
+    if (!name) continue;
+    if (skipNames.has(name)) continue;
+    let node = null;
+    if (idCol >= 0 && r[idCol]) node = IDX.map.get(String(r[idCol]).trim()) || null;
+    if (!node && rawName.includes('>')) {
+      const parts = rawName.split('>').map(normName);
+      let list = kids(null);
+      for (const p of parts) { node = list.find(x => normName(x.name) === p) || null; if (!node) break; list = kids(node.id); }
+    }
+    if (!node) {
+      const indent = (rawName.match(/^[\s ]*/)[0].length / 3) | 0;
+      const parent = indent > 0 ? stack[indent - 1] : null;
+      if (parent) node = kids(parent.id).find(x => normName(x.name) === name) || null;
+      if (!node && stack.length) { // Kinder, Geschwister, Onkel der zuletzt erkannten Zeilen
+        node = kids(stack[stack.length - 1].id).find(x => normName(x.name) === name) || null;
+        for (let d = stack.length - 1; d >= 0 && !node; d--) {
+          const p = d > 0 ? stack[d - 1] : null;
+          node = kids(p ? p.id : null).find(x => normName(x.name) === name) || null;
+        }
+      }
+      if (!node) { const cand = byName.get(name) || []; if (cand.length === 1) node = cand[0]; }
+    }
+    if (!node) { if (hasValues) result.unmatched.push(rawName.trim()); continue; }
+    const depth = nodeDepth(node); stack.length = depth; stack[depth] = node;
+    result.matched++;
+    for (const c of cols) {
+      const x = importNum(r[c.j]);
+      if (x == null) continue;
+      if (Number.isNaN(x)) { result.invalid++; continue; }
+      result.values[c.m.key][node.id] = node.liability ? Math.abs(x) : x;
+      result.cells++;
+    }
+  }
+  for (const k of Object.keys(result.values)) if (!Object.keys(result.values[k]).length) delete result.values[k];
+  return result;
+}
+function showImportPreview(res) {
+  const ks = Object.keys(res.values).sort();
+  const existing = ks.filter(k => db.months[k]).length;
+  const sheet = openSheet(`
+    <h3>Import prüfen</h3>
+    <div class="stats">
+      <div><b>${ks.length}</b><span>Monate${ks.length ? ` · ${monthShort(ks[0])} – ${monthShort(ks[ks.length - 1])}` : ''}</span></div>
+      <div><b>${res.cells}</b><span>Werte</span></div>
+      <div><b>${res.matched}</b><span>Positionen erkannt</span></div>
+      <div><b>${existing}</b><span>Monate schon vorhanden</span></div>
+    </div>
+    ${res.unmatched.length ? `<div class="unmatched"><b>Nicht zugeordnet (${res.unmatched.length})</b>${res.unmatched.map(esc).join('<br>')}</div>` : ''}
+    ${res.invalid ? `<div class="unmatched"><b>Unlesbare Zellen: ${res.invalid}</b></div>` : ''}
+    <div class="sheet-actions"><div class="row2">
+      <button class="btn ghost" id="iCancel">Abbrechen</button>
+      <button class="btn" id="iGo" ${res.cells ? '' : 'disabled'}>Importieren</button>
+    </div></div>`);
+  $('#iCancel', sheet).onclick = closeSheet;
+  $('#iGo', sheet).onclick = () => {
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(db)); } catch (e) { }
+    const now = new Date().toISOString();
+    for (const k of ks) {
+      const e = db.months[k] || (db.months[k] = { forecast: isForecastNow(k), values: {}, saved: now });
+      Object.assign(e.values, res.values[k]);
+      if (res.forecast[k]) e.forecast = true;
+      e.saved = now;
+    }
+    persist(); reindex(); ui.month = null;
+    closeSheet();
+    toast(`${ks.length} Monate importiert`);
+    renderSettings();
+  };
 }
 function demoDB() {
   const d = freshDB();
@@ -804,9 +1017,10 @@ function treeHTML(list, lvl) {
     <div class="tnode${n.archived ? ' arch' : ''}" data-id="${n.id}">
       <div class="ncrow">
         <span class="handle" aria-label="Ziehen zum Sortieren">${ICON.grip}</span>
-        ${lvl === 0 ? `<span class="strip" style="background:${n.color}"></span>` : ''}
+        ${lvl === 0 ? `<span class="strip" style="background:${cc(n.color)}"></span>` : ''}
         <button class="nm l${lvl}" data-edit="${n.id}">${esc(n.name)}</button>
         ${n.liability ? '<span class="badge">Schuld</span>' : ''}
+        ${n.excluded ? '<span class="badge">Nicht gezählt</span>' : ''}
         ${n.archived ? '<span class="badge">Archiviert</span>' : ''}
         <button class="edit" data-edit="${n.id}" aria-label="Bearbeiten">${ICON.edit}</button>
       </div>
@@ -900,7 +1114,8 @@ function editNode(id, parentForNew) {
     <div class="field"><label for="fParent">Gehört zu</label>
       <select id="fParent"><option value="">— Hauptkategorie —</option>${parents.map(p => `<option value="${p.id}" ${p.id === n.parent ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>
     <div class="field" id="fColorWrap"><label>Farbe</label>
-      <div class="swatches">${PALETTE.map(p => `<button type="button" data-c="${p[0]}" style="background:${p[0]}" class="${p[0] === color ? 'on' : ''}" aria-label="Farbe"></button>`).join('')}</div></div>
+      <div class="swatches">${PALETTE.map(p => `<button type="button" data-c="${p[0]}" style="background:${cc(p[0])}" class="${p[0] === color ? 'on' : ''}" aria-label="Farbe"></button>`).join('')}</div></div>
+    <label class="switch"><span>Nicht zum Vermögen zählen</span><input type="checkbox" id="fExcl" ${n.excluded ? 'checked' : ''}></label>
     ${hasKids ? '' : `<label class="switch"><span>Wird abgezogen (Schuld)</span><input type="checkbox" id="fLiab" ${n.liability ? 'checked' : ''}></label>`}
     <div class="sheet-actions">
       <div class="row2"><button class="btn ghost" id="fCancel">Abbrechen</button><button class="btn" id="fSave">Speichern</button></div>
@@ -926,6 +1141,7 @@ function editNode(id, parentForNew) {
     target.name = name;
     if (!parent) target.color = color; else delete target.color;
     const lb = $('#fLiab', sheet); if (lb) target.liability = lb.checked;
+    target.excluded = $('#fExcl', sheet).checked;
     persist(); reindex(); closeSheet(); renderCats();
     toast('Gespeichert');
   };
@@ -959,6 +1175,8 @@ function editNode(id, parentForNew) {
    Start
    ============================================================= */
 db = load();
+applyTheme();
+mq.addEventListener && mq.addEventListener('change', () => { if ((db.settings.theme || 'system') === 'system') { applyTheme(); route(); } });
 try { ui.open = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')); } catch (e) { }
 reindex();
 window.addEventListener('hashchange', route);
