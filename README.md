@@ -149,6 +149,10 @@ Punkte, die beim Weiterbauen leicht Schaden anrichten:
   beide Metas, das Boot-Skript in `index.html` und `applyTheme()` in
   `app.js`.
 
+  Daneben steht `background_color` im Manifest auf derselben Farbe. Das
+  betrifft nur den kurzen Startbildschirm beim Öffnen — vorher blitzte
+  dort im Dunkelmodus Weiß auf. Auch diese Farbe gilt für beide Modi.
+
   Eine Änderung am Manifest wirkt erst, wenn Chrome die WebAPK
   aktualisiert — im Hintergrund innerhalb etwa eines Tages, oder sofort
   beim Neuinstallieren. **Vorher unbedingt ein Backup exportieren**, weil

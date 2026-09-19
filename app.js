@@ -4,7 +4,7 @@
    ============================================================= */
 'use strict';
 
-const APP_VERSION = '1.2.3';
+const APP_VERSION = '1.2.4';
 const UNDO_KEY = 'vermoegen.vorImport';
 const STORE_KEY = 'vermoegen.v1';
 const OPEN_KEY = 'vermoegen.open';
