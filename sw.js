@@ -1,6 +1,6 @@
 /* Service Worker – macht die App offline nutzbar.
    Bei jeder neuen App-Version CACHE hochzählen. */
-const CACHE = 'vermoegen-1.1.0';
+const CACHE = 'vermoegen-1.2.0';
 const FILES = ['./', './index.html', './app.css', './app.js', './inter.woff2', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png', './icon-180.png'];
 

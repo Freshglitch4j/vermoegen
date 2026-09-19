@@ -4,7 +4,7 @@
    ============================================================= */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const UNDO_KEY = 'vermoegen.vorImport';
 const STORE_KEY = 'vermoegen.v1';
 const OPEN_KEY = 'vermoegen.open';
@@ -130,15 +130,14 @@ function defaultNodes() {
     nodes.push(n); return n.id;
   };
   const cash = add('Cash', null, { color: PALETTE[0][0] });
-  ['Gehaltskonto', 'Bargeld', 'Tagesgeld / Bundesschatzkonto', 'Verrechnungskonto Flatex'].forEach(n => add(n, cash));
-  const etf = add('ETF-Depot', null, { color: PALETTE[1][0] }); add('ETF 1', etf);
-  const im = add('Immobilie', null, { color: PALETTE[2][0] }); add('Grundstück', im); add('Kredit', im, { liability: true });
-  const kr = add('Kryptowährungen', null, { color: PALETTE[3][0] });
-  const bp = add('Bitpanda', kr); ['Bitcoin', 'Ethereum', 'Sonstige'].forEach(n => add(n, bp)); add('Metamask', kr);
-  const p2p = add('P2P-Kredite', null, { color: PALETTE[4][0] }); add('Bondora Go & Grow', p2p); add('Mintos', p2p);
-  const ab = add('Abfertigung neu', null, { color: PALETTE[5][0] }); add('Vorsorgekasse 1', ab); add('Vorsorgekasse 2', ab);
+  ['Girokonto', 'Bargeld', 'Tagesgeld', 'Verrechnungskonto'].forEach(n => add(n, cash));
+  const wp = add('Wertpapiere', null, { color: PALETTE[1][0] }); add('ETF', wp); add('Aktien', wp);
+  const im = add('Immobilie', null, { color: PALETTE[2][0] }); add('Objektwert', im); add('Kredit', im, { liability: true });
+  const kr = add('Krypto', null, { color: PALETTE[3][0] }); add('Börse', kr); add('Wallet', kr);
+  const p2p = add('P2P-Kredite', null, { color: PALETTE[4][0] }); add('Plattform 1', p2p); add('Plattform 2', p2p);
+  const vs = add('Vorsorge', null, { color: PALETTE[5][0] }); add('Vorsorgekasse 1', vs); add('Vorsorgekasse 2', vs);
   const so = add('Sonstiges', null, { color: PALETTE[6][0] });
-  ['PC', 'PS5', 'Lego', 'Livingpackets', 'Poker-Bankroll'].forEach(n => add(n, so));
+  ['Position 1', 'Position 2'].forEach(n => add(n, so));
   return nodes;
 }
 const freshDB = () => ({ v: 1, nodes: defaultNodes(), months: {}, settings: { hide: false, lastBackup: null } });
@@ -978,23 +977,22 @@ function demoDB() {
   const N = 24, last = addMonths(curKey(), -1);
   const wave = (i, a, ph = 0) => 1 + a * Math.sin(i * 0.9 + ph);
   const gen = {
-    'Gehaltskonto': i => 1900 + 700 * Math.abs(Math.sin(i * 1.3)),
+    'Girokonto': i => 1900 + 700 * Math.abs(Math.sin(i * 1.3)),
     'Bargeld': i => 180 + 120 * Math.abs(Math.sin(i * 2.1)),
-    'Tagesgeld / Bundesschatzkonto': i => 8500 + 250 * i,
-    'Verrechnungskonto Flatex': i => 400 + 40 * (i % 6),
-    'ETF 1': i => (24000 + 700 * i) * wave(i, 0.035, 1),
-    'Grundstück': () => 145000,
+    'Tagesgeld': i => 8500 + 250 * i,
+    'Verrechnungskonto': i => 400 + 40 * (i % 6),
+    'ETF': i => (24000 + 700 * i) * wave(i, 0.035, 1),
+    'Aktien': i => (3000 + 60 * i) * wave(i, 0.08, 2),
+    'Objektwert': () => 145000,
     'Kredit': i => 93000 - 380 * i,
-    'Bitcoin': i => (3800 + 120 * i) * wave(i, 0.18, 2),
-    'Ethereum': i => (1500 + 30 * i) * wave(i, 0.22, 3),
-    'Sonstige': i => 450 * wave(i, 0.25, 4),
-    'Metamask': i => (1200 + 15 * i) * wave(i, 0.22, 3),
-    'Bondora Go & Grow': i => 1800 + 40 * i,
-    'Mintos': i => Math.max(500, 1500 - 45 * i),
+    'Börse': i => (5500 + 150 * i) * wave(i, 0.18, 2),
+    'Wallet': i => (1200 + 15 * i) * wave(i, 0.22, 3),
+    'Plattform 1': i => 1800 + 40 * i,
+    'Plattform 2': i => Math.max(500, 1500 - 45 * i),
     'Vorsorgekasse 1': i => 4300 + 45 * i,
     'Vorsorgekasse 2': i => 1900 + 18 * i,
-    'PC': () => 900, 'PS5': () => 350, 'Lego': i => 900 + 12 * i, 'Livingpackets': () => 800,
-    'Poker-Bankroll': i => 700 * wave(i, 0.15, 5)
+    'Position 1': i => 900 + 12 * i,
+    'Position 2': i => 700 * wave(i, 0.15, 5)
   };
   const mk = (k, i, fc) => {
     const values = {};
