@@ -4,7 +4,7 @@
    ============================================================= */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const UNDO_KEY = 'vermoegen.vorImport';
 const STORE_KEY = 'vermoegen.v1';
 const OPEN_KEY = 'vermoegen.open';
@@ -22,8 +22,8 @@ function applyTheme() {
   const pref = (db && db.settings && db.settings.theme) || 'system';
   THEME = pref === 'system' ? (mq.matches ? 'dark' : 'light') : pref;
   document.documentElement.dataset.theme = THEME;
-  const meta = document.querySelector('meta[name=theme-color]');
-  if (meta) meta.content = THEME === 'dark' ? '#0B1120' : '#F3F4F6';
+  const c = THEME === 'dark' ? '#0B1120' : '#F3F4F6';
+  document.querySelectorAll('meta[name=theme-color]').forEach(m => { m.content = c; });
 }
 
 const MONTHS = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
