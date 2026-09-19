@@ -130,13 +130,29 @@ Punkte, die beim Weiterbauen leicht Schaden anrichten:
   geprüft — nicht durch beliebige Farben ersetzen.
 - **Import-Rückgängig.** Liegt unter `vermoegen.vorImport` und wird beim
   nächsten Import überschrieben. Es gibt nur eine Stufe.
-- **Farbe der System-Statusleiste.** Kommt unter Android aus `theme-color`.
-  Die Farbe steht deklarativ als zwei `<meta>`-Elemente je
-  `prefers-color-scheme` in `index.html`, weil Chrome sie beim ersten
-  Rendern auswertet und spätere Änderungen per JavaScript im installierten
-  Betrieb nicht zuverlässig übernimmt. Wer die Farben ändert, muss sie an
-  drei Stellen angleichen: beide Metas, das Boot-Skript in `index.html` und
-  `applyTheme()` in `app.js`.
+- **Farbe der System-Statusleiste.** Zwei Quellen, je nach Betriebsart —
+  das ist die unangenehmste Stelle im Projekt:
+  - **Installiert unter Android** gilt allein `theme_color` aus dem
+    Manifest. Chrome backt diesen Wert beim Installieren in die erzeugte
+    Android-App (WebAPK) ein; die `<meta>`-Angaben der Seite werden dort
+    schlicht ignoriert. Das Manifest kennt keine Media-Queries, es gibt
+    also **eine** Farbe für beide Modi. Gewählt ist `#0F1B3D`, die
+    Startfarbe der Hero-Karte — im Dunkelmodus fast nahtlos, im hellen
+    Modus ein bewusst wirkender Kopfbereich.
+  - **Im Browsertab** gelten dagegen die beiden `<meta name="theme-color">`
+    in `index.html`, ausgewählt je `prefers-color-scheme`. Dort passt sich
+    die Farbe also weiterhin dem Modus an.
+
+  Die Metas stehen deklarativ im HTML, weil Chrome die Farbe beim ersten
+  Rendern auswertet und spätere Änderungen per JavaScript nicht
+  zuverlässig übernimmt. Wer sie ändert, muss drei Stellen angleichen:
+  beide Metas, das Boot-Skript in `index.html` und `applyTheme()` in
+  `app.js`.
+
+  Eine Änderung am Manifest wirkt erst, wenn Chrome die WebAPK
+  aktualisiert — im Hintergrund innerhalb etwa eines Tages, oder sofort
+  beim Neuinstallieren. **Vorher unbedingt ein Backup exportieren**, weil
+  das Deinstallieren den `localStorage` mitnimmt.
 
 ## Ideen für später
 
