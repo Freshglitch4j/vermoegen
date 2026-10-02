@@ -4,10 +4,12 @@
    ============================================================= */
 'use strict';
 
-const APP_VERSION = '1.2.4';
+const APP_VERSION = '1.2.5';
 const UNDO_KEY = 'vermoegen.vorImport';
 const STORE_KEY = 'vermoegen.v1';
 const OPEN_KEY = 'vermoegen.open';
+const LOCK_KEY = 'vermoegen.sperre';
+const SESSION_KEY = 'vermoegen.entsperrt';
 
 /* Kategorienfarben (geprüfte Palette) – [hell, auf dunklem Block] */
 const PALETTE = [
@@ -44,7 +46,8 @@ const ICON = {
   table: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="20"/></svg>',
   flask: '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>',
-  tree: '<svg viewBox="0 0 24 24"><line x1="9" y1="6" x2="21" y2="6"/><line x1="13" y1="12" x2="21" y2="12"/><line x1="13" y1="18" x2="21" y2="18"/><polyline points="4 4 4 18 9 18"/><line x1="4" y1="12" x2="9" y2="12"/></svg>'
+  tree: '<svg viewBox="0 0 24 24"><line x1="9" y1="6" x2="21" y2="6"/><line x1="13" y1="12" x2="21" y2="12"/><line x1="13" y1="18" x2="21" y2="18"/><polyline points="4 4 4 18 9 18"/><line x1="4" y1="12" x2="9" y2="12"/></svg>',
+  finger: '<svg viewBox="0 0 24 24"><path d="M3.8 8.1a9.3 9.3 0 0 1 16.4 0"/><path d="M6.4 16.6c.5-1.2.8-2.5.8-3.8v-1.3a4.8 4.8 0 0 1 9.6 0v1.3c0 1.1-.1 2.2-.4 3.3"/><path d="M9.6 19.3c.7-1.4 1.1-3 1.1-4.6v-3a1.3 1.3 0 0 1 2.6 0v3c0 1.3-.2 2.5-.5 3.7"/><path d="M12.9 21.2c.3-.9.5-1.8.6-2.7"/></svg>'
 };
 
 /* ---------------- Hilfsfunktionen ---------------- */
@@ -211,6 +214,7 @@ function setTab(name) {
   $$('#tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === name));
 }
 function route() {
+  if (LOCKED) return;
   if (sheetOpen) removeSheet();
   const h = location.hash.replace(/^#\/?/, '');
   const [p, a] = h.split('/');
@@ -695,6 +699,13 @@ function renderSettings() {
   const lb = db.settings.lastBackup ? new Date(db.settings.lastBackup).toLocaleDateString('de-AT') : 'noch nie';
   const theme = db.settings.theme || 'system';
   let undo = null; try { undo = localStorage.getItem(UNDO_KEY); } catch (e) { }
+  const secLock = BIO === false ? '' : `
+    <div class="group-title">Sicherheit</div>
+    <section class="card pad">
+      <label class="switch"><span>Mit Fingerabdruck sperren</span><input type="checkbox" id="lock" ${lockOn() ? 'checked' : ''}></label>
+      <p class="hint">Fragt beim Start nach dem Fingerabdruck. Das hält Neugierige ab, ersetzt aber keine Verschlüsselung: Die Werte liegen weiterhin unverschlüsselt im Browser.</p>
+      ${lockOn() ? `<p class="hint warn">Ohne diesen Fingerabdruck lässt sich die Sperre nur durch Löschen der Website-Daten entfernen. Halte ein aktuelles Backup bereit.</p>` : ''}
+    </section>`;
   v.innerHTML = `
     <div class="titlebar"><h1 class="left">Einstellungen</h1></div>
     <div class="group-title">Darstellung</div>
@@ -703,6 +714,7 @@ function renderSettings() {
         ${[['system', 'System'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([k, l]) => `<button data-t="${k}" class="${theme === k ? 'on' : ''}">${l}</button>`).join('')}
       </div>
     </section>
+    ${secLock}
     <div class="group-title">Aufbau</div>
     <section class="card">
       <a class="item" href="#/einstellungen/kategorien">${ICON.tree}<span class="grow">Kategorien</span><span class="sub">${cnt}</span>${ICON.go}</a>
@@ -730,6 +742,15 @@ function renderSettings() {
   $$('#theme button').forEach(b => b.onclick = () => {
     db.settings.theme = b.dataset.t; persist(); applyTheme(); renderSettings();
   });
+  if (BIO === null) bioAvailable().then(() => { if ($('#theme')) renderSettings(); });
+  const lk = $('#lock');
+  if (lk) lk.onchange = async ev => {
+    if (ev.target.checked) {
+      try { await lockEnable(); toast('Sperre aktiviert'); }
+      catch (e) { toast(e && e.name === 'NotAllowedError' ? 'Abgebrochen' : 'Nicht eingerichtet'); }
+    } else { lockDisable(); toast('Sperre aufgehoben'); }
+    renderSettings();
+  };
   $('#bk').onclick = () => {
     const d = new Date();
     db.settings.lastBackup = d.toISOString(); persist();
@@ -1170,6 +1191,107 @@ function editNode(id, parentForNew) {
 }
 
 /* =============================================================
+   Gerätesperre (WebAuthn)
+   Der Fingerabdruck bestätigt nur die Person am Gerät. Die Daten
+   selbst bleiben unverschlüsselt im localStorage – die Sperre hält
+   also Neugierige ab, sie ersetzt keine Verschlüsselung.
+   ============================================================= */
+let LOCKED = false;
+let BIO = null;                      // null = noch nicht geprüft
+
+const b64 = {
+  enc: buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
+};
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
+
+function lockCfg() { try { return JSON.parse(localStorage.getItem(LOCK_KEY) || 'null'); } catch (e) { return null; } }
+const lockOn = () => { const c = lockCfg(); return !!(c && c.credId); };
+function lockDisable() { try { localStorage.removeItem(LOCK_KEY); } catch (e) { } }
+
+/* Steht am Gerät eine Nutzerprüfung bereit (Fingerabdruck, Gesicht, Displaysperre)? */
+async function bioAvailable() {
+  if (BIO === null) {
+    try {
+      BIO = !!(window.isSecureContext && window.PublicKeyCredential &&
+        await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+    } catch (e) { BIO = false; }
+  }
+  return BIO;
+}
+
+/* Einmalig einen Schlüssel im Gerät hinterlegen. Er verlässt das Gerät nie. */
+async function lockEnable() {
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge: rnd(32),
+      rp: { name: 'Vermögen' },
+      user: { id: rnd(16), name: 'vermoegen', displayName: 'Vermögen' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+      attestation: 'none', timeout: 60000
+    }
+  });
+  if (!cred) throw new Error('abgebrochen');
+  localStorage.setItem(LOCK_KEY, JSON.stringify({ credId: b64.enc(cred.rawId), seit: new Date().toISOString() }));
+}
+
+async function lockVerify() {
+  const c = lockCfg(); if (!c) return true;
+  const res = await navigator.credentials.get({
+    publicKey: {
+      challenge: rnd(32),
+      allowCredentials: [{ type: 'public-key', id: b64.dec(c.credId), transports: ['internal'] }],
+      userVerification: 'required', timeout: 60000
+    }
+  });
+  return !!res;
+}
+
+function showLock() {
+  LOCKED = true;
+  document.body.classList.add('locked');
+  const el = document.createElement('div');
+  el.id = 'lockscreen';
+  el.innerHTML = `
+    <div class="lockbox">
+      <span class="lockicon">${ICON.finger}</span>
+      <h1>Vermögen</h1>
+      <p id="lockmsg">Zum Entsperren den Fingerabdruck verwenden.</p>
+      <button class="btn" id="lockgo">Entsperren</button>
+      <button class="lockhelp" id="lockhelp">Entsperren nicht möglich?</button>
+    </div>`;
+  document.body.appendChild(el);
+
+  const msg = $('#lockmsg'), go = $('#lockgo');
+  let busy = false;
+  const attempt = async () => {
+    if (busy) return;
+    busy = true; go.disabled = true;
+    try {
+      if (await lockVerify()) {
+        try { sessionStorage.setItem(SESSION_KEY, '1'); } catch (e) { }
+        LOCKED = false;
+        el.remove(); document.body.classList.remove('locked');
+        route();
+        return;
+      }
+      msg.textContent = 'Das hat nicht geklappt. Bitte noch einmal versuchen.';
+    } catch (e) {
+      msg.textContent = e && e.name === 'NotAllowedError'
+        ? 'Abgebrochen. Zum Entsperren erneut tippen.'
+        : 'Der Fingerabdruck steht gerade nicht zur Verfügung.';
+    }
+    busy = false; go.disabled = false;
+  };
+  go.onclick = attempt;
+  $('#lockhelp').onclick = () => {
+    msg.textContent = 'Die Sperre hängt am Fingerabdruck dieses Geräts. Lässt er sich nicht mehr verwenden, kann man sie nur entfernen, indem man die Website-Daten der App löscht. Dabei gehen die erfassten Werte verloren und müssen aus einem Backup zurückgeholt werden.';
+  };
+  attempt();                          // beim Start gleich fragen
+}
+
+/* =============================================================
    Start
    ============================================================= */
 db = load();
@@ -1178,7 +1300,10 @@ mq.addEventListener && mq.addEventListener('change', () => { if ((db.settings.th
 try { ui.open = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')); } catch (e) { }
 reindex();
 window.addEventListener('hashchange', route);
-route();
+bioAvailable();
+let sessionOffen = false;
+try { sessionOffen = sessionStorage.getItem(SESSION_KEY) === '1'; } catch (e) { }
+if (lockOn() && !sessionOffen) showLock(); else route();
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

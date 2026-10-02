@@ -20,8 +20,8 @@ Läuft über GitHub Pages aus `main`: https://freshglitch4j.github.io/vermoegen/
 - **Entwicklung** – Verlaufslinie und gestapelte Zusammensetzung,
   Prognosemonate gestrichelt
 - **Einstellungen** – Kategorienverwaltung mit Ziehen zum Sortieren,
-  Hell-/Dunkelmodus, Beträge verbergen, Backup als JSON,
-  Export und Import über CSV, Testdaten laden
+  Hell-/Dunkelmodus, Beträge verbergen, Gerätesperre per Fingerabdruck,
+  Backup als JSON, Export und Import über CSV, Testdaten laden
 
 Zahlen durchgehend im österreichischen Format mit Komma als Dezimaltrennzeichen.
 
@@ -99,6 +99,11 @@ Kein Toolchain nötig — Dateien bearbeiten, lokal ausliefern:
 python3 -m http.server 8099
 ```
 
+Im Browser dann `http://localhost:8099/` aufrufen, **nicht** `127.0.0.1`:
+WebAuthn verlangt eine echte Domain und weist IP-Adressen mit einem
+`SecurityError` ab, womit sich die Gerätesperre lokal nicht einrichten
+lässt.
+
 Getestet wird mit Playwright im Zuschnitt des Zielgeräts (Samsung Galaxy A55,
 Chrome): Viewport 412×915, `isMobile`, `hasTouch`, Sprache `de-AT`.
 Abnahmekriterium: keine Fehler in der Konsole — und die Screenshots wirklich
@@ -128,6 +133,21 @@ Punkte, die beim Weiterbauen leicht Schaden anrichten:
 - **Kategoriefarben.** `PALETTE` enthält Paare aus heller und dunkler Stufe,
   `cc()` wählt je nach Modus. Die Palette ist auf Farbfehlsichtigkeit
   geprüft — nicht durch beliebige Farben ersetzen.
+- **Gerätesperre.** Optional und standardmäßig aus. Sie nutzt WebAuthn:
+  Beim Einschalten legt das Gerät einen Schlüssel an, dessen ID unter
+  `vermoegen.sperre` liegt; beim Start muss er per Fingerabdruck bestätigt
+  werden. **Das ist keine Verschlüsselung** — die Werte stehen weiterhin
+  im Klartext im localStorage. Die Sperre ist eine Tür, kein Safe.
+  Drei Punkte, die man dabei nicht übersehen darf:
+  - Der Schlüssel steht bewusst **nicht** in `vermoegen.v1`. Läge er dort,
+    würde ein Backup-Import auf einem anderen Gerät eine Sperre
+    aktivieren, deren Fingerabdruck es dort gar nicht gibt.
+  - Innerhalb einer Sitzung wird nur einmal gefragt, vermerkt unter
+    `vermoegen.entsperrt` im sessionStorage. Sonst würde der automatische
+    Neustart durch den Service Worker direkt ein zweites Mal fragen.
+  - `route()` rendert nichts, solange `LOCKED` gesetzt ist. Der
+    Sperrbildschirm ist also kein bloßer Überwurf — es wird wirklich
+    nichts aufgebaut.
 - **Import-Rückgängig.** Liegt unter `vermoegen.vorImport` und wird beim
   nächsten Import überschrieben. Es gibt nur eine Stufe.
 - **Farbe der System-Statusleiste.** Zwei Quellen, je nach Betriebsart —
